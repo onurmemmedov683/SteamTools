@@ -1,0 +1,83 @@
+name: Build legacy SteamTools Android APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - develop
+    paths:
+      - .github/workflows/android-apk.yml
+
+permissions:
+  contents: read
+
+jobs:
+  build-android:
+    runs-on: macos-latest
+    timeout-minutes: 90
+
+    steps:
+      - name: Checkout this fork (workflow source)
+        uses: actions/checkout@v4
+
+      - name: Checkout legacy Android source
+        uses: actions/checkout@v4
+        with:
+          repository: BeyondDimension/SteamTools
+          ref: main
+          path: source
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Set up .NET 6
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 6.0.x
+
+      - name: Set up Xamarin.Android
+        uses: maxim-lobanov/setup-xamarin@v1
+        with:
+          xamarin-android-version: '11.2'
+
+      - name: Set up Android NDK
+        uses: nttld/setup-ndk@v1.0.6
+        id: setup-ndk
+        with:
+          ndk-version: r21e
+          add-to-path: false
+
+      - name: Verify build tools
+        run: |
+          dotnet --info
+          msbuild -version
+          java -version
+
+      - name: Restore legacy solution dependencies
+        working-directory: source
+        run: dotnet restore "SteamToolsV2+.Mac.slnf"
+
+      - name: Build shared Xamarin UI
+        working-directory: source
+        run: dotnet msbuild "./src/ST.Client.XamarinForms/ST.Client.XamarinForms.csproj" /p:Configuration=Release
+
+      - name: Build Android APK
+        working-directory: source
+        env:
+          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+        run: msbuild "./src/ST.Client.Mobile.Droid.App/ST.Client.Android.App.csproj" /t:PackageForAndroid /p:Configuration=Release
+
+      - name: Collect APK
+        run: |
+          mkdir -p source/artifacts
+          find source/src/ST.Client.Mobile.Droid.App -type f -iname '*.apk' -exec cp '{}' source/artifacts/ ';'
+          echo "APK files found:"
+          find source/artifacts -maxdepth 1 -type f -print
+          test -n "$(find source/artifacts -maxdepth 1 -type f -iname '*.apk' -print -quit)"
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: steamtools-legacy-android-apk
+          path: source/artifacts/*.apk
+          if-no-files-found: error
+          retention-days: 7
